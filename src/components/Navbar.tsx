@@ -1,0 +1,154 @@
+"use client";
+
+import { useState } from "react";
+import { usePathname } from "next/navigation";
+import Link from "next/link";
+import { Bell, CalendarDays, Moon, Sun, UserRound, X } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useSpendWise } from "@/components/spendwise/SpendWiseProvider";
+import { FinancePageLoading, useFinanceHydrated } from "@/components/spendwise/Shared";
+import { formatCurrency, getBudgetSpent, getCategory } from "@/lib/spendwise";
+
+const titles: Record<string, string> = {
+  "/": "Overview",
+  "/transactions": "Transactions",
+  "/budgets": "Budgets",
+  "/analytics": "Analytics",
+  "/categories": "Categories",
+  "/settings": "Settings",
+  "/profile": "Profile",
+  "/about": "About",
+};
+
+export default function Navbar() {
+  const pathname = usePathname();
+  const [accountPopoverOpen, setAccountPopoverOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const { data, dismissedBudgetAlerts, dismissBudgetAlert, dismissBudgetAlerts } = useSpendWise();
+  const hydrated = useFinanceHydrated();
+  const today = new Date();
+  const accountName = data.settings.displayName.trim() || "Personal account";
+  const profileDetails = [
+    { label: "Email", value: data.settings.email.trim() },
+    { label: "Phone", value: data.settings.phone.trim() },
+    { label: "Location", value: data.settings.location.trim() },
+    { label: "Occupation", value: data.settings.occupation.trim() },
+  ].filter((detail) => detail.value);
+  const allBudgetAlerts = data.budgets.flatMap((budget) => {
+    const spent = getBudgetSpent(data.transactions, budget.categoryId);
+    const percent = spent / budget.limit * 100;
+    if (percent < data.settings.budgetAlertThreshold) return [];
+    const level = percent > 100 ? "exceeded" : percent === 100 ? "reached" : "approaching";
+    return [{
+      id: `${budget.id}:${budget.limit}:${data.settings.budgetAlertThreshold}:${level}`,
+      categoryName: getCategory(data, budget.categoryId)?.name ?? "Category",
+      spent,
+      limit: budget.limit,
+      percent,
+      level,
+    }];
+  });
+  const budgetAlerts = allBudgetAlerts.filter((alert) => !dismissedBudgetAlerts.includes(alert.id));
+  const formatAmount = (amount: number) => formatCurrency(amount, data.settings.currency, data.settings.fractionDigits);
+  const currentDate = pathname === "/" && <time className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground" aria-label="Current date"><CalendarDays className="size-4 shrink-0" /><span className="hidden md:inline">{today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><span className="md:hidden">{today.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span></time>;
+  return <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur sm:px-7">
+    <div className="flex items-center gap-3"><SidebarTrigger /><span className="text-sm font-medium">{titles[pathname] ?? "SpendWise"}</span></div>
+    <div className="flex items-center gap-2">
+      {currentDate}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label={budgetAlerts.length ? `Notifications: ${budgetAlerts.length} budget alerts` : "Notifications"} className="relative">
+            <Bell className="size-4" />
+            {budgetAlerts.length > 0 && <span aria-hidden="true" className="absolute right-0 top-0 grid min-h-4 min-w-4 translate-x-1/4 -translate-y-1/4 place-items-center rounded-full border-2 border-background bg-destructive px-1 text-[10px] font-semibold leading-none text-destructive-foreground">{budgetAlerts.length > 9 ? "9+" : budgetAlerts.length}</span>}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" sideOffset={8} className="w-80">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Notifications</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Alerts start at {data.settings.budgetAlertThreshold}% of a monthly limit</p>
+            </div>
+            {budgetAlerts.length > 0 && <div className="flex items-center gap-2">
+              <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">{budgetAlerts.length}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => dismissBudgetAlerts(budgetAlerts.map((alert) => alert.id))}
+              >
+                Clear notifications
+              </Button>
+            </div>}
+          </div>
+          {!hydrated ? <FinancePageLoading /> : budgetAlerts.length ? <ul className="mt-4 max-h-72 space-y-3 overflow-y-auto">
+            {budgetAlerts.map((alert) => <li key={alert.id} className="rounded-lg border p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{alert.categoryName} budget {alert.level === "approaching" ? "approaching its limit" : alert.level}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{formatAmount(alert.spent)} of {formatAmount(alert.limit)} ({Math.round(alert.percent)}%)</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0"
+                  aria-label={`Dismiss ${alert.categoryName} budget notification`}
+                  onClick={() => dismissBudgetAlert(alert.id)}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            </li>)}
+          </ul> : <p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">No budget alerts this month.</p>}
+          <Button asChild variant="link" className="mt-3 h-auto p-0 text-sm">
+            <Link href="/budgets">View budgets</Link>
+          </Button>
+        </PopoverContent>
+      </Popover>
+      <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+        <Sun className="size-4 dark:hidden" /><Moon className="hidden size-4 dark:block" />
+      </Button>
+      <Popover
+        open={pathname !== "/profile" && accountPopoverOpen}
+        onOpenChange={(open) => {
+          if (pathname !== "/profile") setAccountPopoverOpen(open);
+        }}
+      >
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label={`Open profile details for ${accountName}`} className="rounded-full">
+            <span className="grid size-8 place-items-center rounded-full bg-primary/10 text-primary"><UserRound className="size-4" /></span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" sideOffset={8} className="w-80">
+          {!hydrated ? <FinancePageLoading /> : <>
+            <div className="flex items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><UserRound className="size-5" /></span>
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{accountName}</p>
+              </div>
+            </div>
+            {profileDetails.length > 0 ? (
+              <dl className="mt-3 space-y-1.5 text-sm">
+                {profileDetails.map((detail) => (
+                  <div key={detail.label} className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+                    <dt className="text-muted-foreground">{detail.label}</dt>
+                    <dd className="break-words">{detail.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">No profile details added</p>
+            )}
+            <Button asChild variant="link" className="mt-3 h-auto p-0 text-sm">
+              <Link href="/profile" onClick={() => setAccountPopoverOpen(false)}>View profile</Link>
+            </Button>
+          </>}
+        </PopoverContent>
+      </Popover>
+    </div>
+  </header>;
+}
